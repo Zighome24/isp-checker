@@ -1,0 +1,12 @@
+hosts:
+  - google.com
+  - cloudflare.com
+  - aws.amazon.com
+  - 1.1.1.1
+  - youtube.com
+ping_interval: 30s
+speed_interval: 15m
+prometheus:
+  port: 9090
+logging:
+  level: info
