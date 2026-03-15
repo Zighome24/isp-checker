@@ -1,0 +1,25 @@
+[Unit]
+Description=ISP Checker Container
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=ghcr.io/zighome24/isp-checker:latest
+ContainerName=isp-checker
+
+Network=host
+
+# Required capabilities for ping to work (ICMP raw sockets)
+AddCapability=NET_RAW
+AddCapability=NET_BIND_SERVICE
+
+# DNS configuration - use host's DNS
+DNS=8.8.8.8
+DNS=8.8.4.4
+
+[Service]
+Restart=always
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target default.target

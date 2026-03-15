@@ -5,8 +5,8 @@ global:
 scrape_configs:
   - job_name: 'isp-checker'
     static_configs:
-      - targets: ['isp-checker:9090']
-    scrape_interval: 30s
+      - targets: ['longmont:9090']
+    scrape_interval: 15s
 
   - job_name: 'prometheus'
     static_configs:
