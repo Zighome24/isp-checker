@@ -4,8 +4,9 @@ hosts:
   - aws.amazon.com
   - 1.1.1.1
   - youtube.com
+  - telluride
 ping_interval: 30s
-speed_interval: 15m
+speed_interval: 3m
 prometheus:
   port: 9090
 logging:

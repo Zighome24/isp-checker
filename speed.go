@@ -8,7 +8,11 @@ import (
 )
 
 func measureSpeed() (float64, float64) {
-	serverList, err := speedtest.FetchServers()
+	client := speedtest.New(speedtest.WithUserConfig(&speedtest.UserConfig{
+		SavingMode: true,
+	}))
+
+	serverList, err := client.FetchServers()
 	if err != nil {
 		logger.WithError(err).Error("Failed to fetch server list for speed test")
 		return -1, -1
@@ -54,6 +58,8 @@ func measureSpeed() (float64, float64) {
 		"upload_mbps":   uploadSpeed,
 		"ping_ms":       server.Latency.Milliseconds(),
 	}).Info("Speed test completed")
+
+	server.Context.Reset()
 
 	return downloadSpeed, uploadSpeed
 }

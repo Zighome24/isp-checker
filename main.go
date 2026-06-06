@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
+	"sync"
 	"syscall"
 	"time"
 
@@ -34,12 +36,26 @@ type Metrics struct {
 	uploadSpeed   prometheus.Gauge
 	lastPingTime  *prometheus.GaugeVec
 	lastSpeedTime prometheus.Gauge
+
+	appInfo prometheus.Gauge
+	uptime  prometheus.GaugeFunc
+
+	memoryAllocBytes        prometheus.GaugeFunc
+	memoryHeapAllocBytes    prometheus.GaugeFunc
+	memoryHeapInUseBytes    prometheus.GaugeFunc
+	memoryHeapIdleBytes     prometheus.GaugeFunc
+	memoryHeapReleasedBytes prometheus.GaugeFunc
+	memoryStackInUseBytes   prometheus.GaugeFunc
+	memorySysBytes          prometheus.GaugeFunc
+	gcCount                 prometheus.GaugeFunc
+	goroutines              prometheus.GaugeFunc
 }
 
 var (
-	config  Config
-	metrics Metrics
-	logger  *logrus.Logger
+	config    Config
+	metrics   Metrics
+	logger    *logrus.Logger
+	startTime = time.Now()
 )
 
 func init() {
@@ -104,12 +120,70 @@ func initMetrics() {
 		},
 	)
 
+	metrics.appInfo = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name:        "isp_app_info",
+			Help:        "Static information about the isp-checker application",
+			ConstLabels: prometheus.Labels{"version": "unknown", "go_version": runtime.Version()},
+		},
+	)
+	metrics.appInfo.Set(1)
+
+	metrics.uptime = prometheus.NewGaugeFunc(
+		prometheus.GaugeOpts{
+			Name: "isp_app_uptime_seconds",
+			Help: "Number of seconds isp-checker has been running",
+		},
+		func() float64 { return time.Since(startTime).Seconds() },
+	)
+
+	metrics.memoryAllocBytes = newMemStatsGauge("isp_app_memory_alloc_bytes", "Bytes allocated and still in use by isp-checker", func(m *runtime.MemStats) uint64 { return m.Alloc })
+	metrics.memoryHeapAllocBytes = newMemStatsGauge("isp_app_memory_heap_alloc_bytes", "Heap bytes allocated and still in use by isp-checker", func(m *runtime.MemStats) uint64 { return m.HeapAlloc })
+	metrics.memoryHeapInUseBytes = newMemStatsGauge("isp_app_memory_heap_inuse_bytes", "Heap bytes currently marked as in use by isp-checker", func(m *runtime.MemStats) uint64 { return m.HeapInuse })
+	metrics.memoryHeapIdleBytes = newMemStatsGauge("isp_app_memory_heap_idle_bytes", "Heap bytes reserved but not currently in use by isp-checker", func(m *runtime.MemStats) uint64 { return m.HeapIdle })
+	metrics.memoryHeapReleasedBytes = newMemStatsGauge("isp_app_memory_heap_released_bytes", "Heap bytes released back to the operating system by isp-checker", func(m *runtime.MemStats) uint64 { return m.HeapReleased })
+	metrics.memoryStackInUseBytes = newMemStatsGauge("isp_app_memory_stack_inuse_bytes", "Stack bytes currently in use by isp-checker", func(m *runtime.MemStats) uint64 { return m.StackInuse })
+	metrics.memorySysBytes = newMemStatsGauge("isp_app_memory_sys_bytes", "Bytes obtained from the operating system by the Go runtime", func(m *runtime.MemStats) uint64 { return m.Sys })
+	metrics.gcCount = newMemStatsGauge("isp_app_gc_count_total", "Number of completed garbage collections", func(m *runtime.MemStats) uint64 { return uint64(m.NumGC) })
+	metrics.goroutines = prometheus.NewGaugeFunc(
+		prometheus.GaugeOpts{
+			Name: "isp_app_goroutines",
+			Help: "Number of goroutines currently running in isp-checker",
+		},
+		func() float64 { return float64(runtime.NumGoroutine()) },
+	)
+
 	prometheus.MustRegister(metrics.pingLatency)
 	prometheus.MustRegister(metrics.packetLoss)
 	prometheus.MustRegister(metrics.downloadSpeed)
 	prometheus.MustRegister(metrics.uploadSpeed)
 	prometheus.MustRegister(metrics.lastPingTime)
 	prometheus.MustRegister(metrics.lastSpeedTime)
+	prometheus.MustRegister(metrics.appInfo)
+	prometheus.MustRegister(metrics.uptime)
+	prometheus.MustRegister(metrics.memoryAllocBytes)
+	prometheus.MustRegister(metrics.memoryHeapAllocBytes)
+	prometheus.MustRegister(metrics.memoryHeapInUseBytes)
+	prometheus.MustRegister(metrics.memoryHeapIdleBytes)
+	prometheus.MustRegister(metrics.memoryHeapReleasedBytes)
+	prometheus.MustRegister(metrics.memoryStackInUseBytes)
+	prometheus.MustRegister(metrics.memorySysBytes)
+	prometheus.MustRegister(metrics.gcCount)
+	prometheus.MustRegister(metrics.goroutines)
+}
+
+func newMemStatsGauge(name, help string, value func(*runtime.MemStats) uint64) prometheus.GaugeFunc {
+	return prometheus.NewGaugeFunc(
+		prometheus.GaugeOpts{
+			Name: name,
+			Help: help,
+		},
+		func() float64 {
+			var stats runtime.MemStats
+			runtime.ReadMemStats(&stats)
+			return float64(value(&stats))
+		},
+	)
 }
 
 func startPingMonitor(ctx context.Context) {
@@ -121,8 +195,11 @@ func startPingMonitor(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			var wg sync.WaitGroup
 			for _, host := range config.Hosts {
+				wg.Add(1)
 				go func(h string) {
+					defer wg.Done()
 					latency, loss := pingHost(h)
 					metrics.pingLatency.WithLabelValues(h).Set(latency)
 					metrics.packetLoss.WithLabelValues(h).Set(loss)
@@ -134,6 +211,7 @@ func startPingMonitor(ctx context.Context) {
 					}).Info("Ping measurement completed")
 				}(host)
 			}
+			wg.Wait()
 		}
 	}
 }
